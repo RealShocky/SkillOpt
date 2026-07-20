@@ -18,7 +18,6 @@ from skillopt.model.backend_config import (
     get_target_backend,
 )
 
-
 ANSWER_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -1212,6 +1211,11 @@ def run_cursor_exec(
     actual_sandbox = str(sandbox or config["sandbox"])
     if actual_sandbox not in {"enabled", "disabled"}:
         raise ValueError("Cursor Agent sandbox must be 'enabled' or 'disabled'")
+    if allow_file_edits and actual_sandbox == "disabled":
+        raise ValueError(
+            "Cursor Agent file-edit rollouts require sandbox='enabled'; "
+            "refusing to combine --force with a disabled sandbox"
+        )
 
     for attempt in range(retries + 1):
         attempt_prompt = _exec_prompt(

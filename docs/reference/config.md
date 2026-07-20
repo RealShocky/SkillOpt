@@ -66,7 +66,7 @@ defaults to `claude` and can be overridden with `CLAUDE_CLI_BIN`.
 | `model.codex_exec_*` | Codex path, sandbox, profile, SDK mode, reasoning, network/search, and approval policy |
 | `model.claude_code_exec_*` | Claude path, profile, SDK mode, effort, and thinking-token cap |
 | `model.cursor_exec_path` | Cursor Agent executable path; default `cursor-agent` |
-| `model.cursor_exec_sandbox` | Cursor sandbox mode: `enabled` (default) or `disabled` |
+| `model.cursor_exec_sandbox` | Cursor sandbox mode: `enabled` (default) or `disabled`; file-edit rollouts require `enabled` |
 
 ## Training (`train`)
 

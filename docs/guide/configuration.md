@@ -205,7 +205,9 @@ directly through this backend.
 Cursor Agent first, then select it with `model.target_backend=cursor_exec`.
 Read-only rollouts use Ask mode; artifact-producing rollouts add Cursor's
 headless `--force` flag inside the benchmark workspace. SkillOpt enables the
-Cursor sandbox by default and does not approve MCP servers automatically.
+Cursor sandbox by default and rejects file-edit rollouts if it is disabled;
+read-only Ask-mode rollouts may explicitly disable it. SkillOpt does not approve
+MCP servers automatically.
 
 ### Three OpenAI-compatible paths
 

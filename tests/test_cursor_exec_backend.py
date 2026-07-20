@@ -201,6 +201,33 @@ def test_cursor_exec_force_is_limited_to_file_edit_rollouts(
     assert "You may modify files" in prompt
 
 
+def test_cursor_exec_rejects_file_edits_with_disabled_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    work_dir = _workspace(tmp_path)
+    calls = 0
+
+    def fake_run(_cmd: list[str], **_kwargs: Any) -> SimpleNamespace:
+        nonlocal calls
+        calls += 1
+        return SimpleNamespace(returncode=0, stdout=_result(), stderr="")
+
+    backend_config.configure_cursor_exec(sandbox="disabled")
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+
+    with pytest.raises(ValueError, match="refusing to combine --force"):
+        harness.run_cursor_exec(
+            work_dir=str(work_dir),
+            prompt="Write solution.py.",
+            model="composer-2.5",
+            timeout=10,
+            allow_file_edits=True,
+        )
+
+    assert calls == 0
+
+
 def test_cursor_exec_retries_zero_exit_malformed_output(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
