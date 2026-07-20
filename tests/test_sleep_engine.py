@@ -1603,11 +1603,6 @@ class TestCursorBackend(unittest.TestCase):
             CursorCliBackend._parse_json_response('{"type":"message","result":"not terminal"}'),
             "",
         )
-        tool_cmd = backend._command("/tmp/cursor-tools", read_only=False)
-        self.assertNotIn("--force", tool_cmd)
-        self.assertNotIn("--approve-mcps", tool_cmd)
-        self.assertEqual(tool_cmd[tool_cmd.index("--sandbox") + 1], "disabled")
-        self.assertNotIn("--mode", tool_cmd)
 
     def test_nonzero_and_error_results_fail_once_with_redacted_diagnostics(self):
         from skillopt_sleep.backend import CursorBackendError, CursorCliBackend
@@ -1729,84 +1724,82 @@ class TestCursorBackend(unittest.TestCase):
 
         self.assertEqual(run.call_count, 2)
 
-    def test_cursor_tool_names_permissions_and_windows_invocation_are_scoped(self):
+    def test_tool_aware_replay_fails_before_cursor_subprocess(self):
         from skillopt_sleep.backend import CursorBackendError, CursorCliBackend
 
         backend = CursorCliBackend(cursor_path="cursor-agent-test")
         task = TaskRecord(id="cursor-tools", project="/p", intent="search")
-        for unsafe in (
-            ["../escape"],
-            ["/tmp/escape"],
-            ["bad name"],
-            ["CON"],
-            ["search", "SEARCH"],
-        ):
-            with self.subTest(tools=unsafe):
-                with mock.patch.object(backend, "_invoke_once") as invoke:
-                    with self.assertRaises(CursorBackendError):
-                        backend.attempt_with_tools(task, skill="", memory="", tools=unsafe)
-                invoke.assert_not_called()
-
-        with tempfile.TemporaryDirectory() as workspace:
-            backend._write_tool_permissions(workspace, ["search"], is_windows=False)
-            with open(os.path.join(workspace, ".cursor", "cli.json"), encoding="utf-8") as f:
-                permissions = json.load(f)["permissions"]
-        self.assertEqual(permissions["allow"], ["Shell(./search)"])
-        self.assertEqual(
-            permissions["deny"],
-            ["Read(**)", "Write(**)", "Mcp(*:*)"],
-        )
-        self.assertEqual(
-            backend._tool_invocations(["search"], is_windows=True),
-            (".\\search.cmd", '.\\search.cmd "query"'),
-        )
-
-        with mock.patch.object(
-            backend,
-            "_invoke_once",
-            side_effect=CursorBackendError("Cursor Agent timed out", retryable=True),
-        ) as invoke:
-            with self.assertRaises(CursorBackendError):
+        with mock.patch("skillopt_sleep.backend.subprocess.run") as run:
+            with self.assertRaisesRegex(
+                CursorBackendError,
+                "Cursor tool-aware replay is temporarily disabled",
+            ):
                 backend.attempt_with_tools(task, skill="", memory="", tools=["search"])
-        self.assertEqual(invoke.call_count, 1)
+        run.assert_not_called()
+        self.assertIn("temporarily disabled", backend.last_call_error)
+        self.assertEqual(backend._cache, {})
 
-    def test_attempt_with_tools_uses_actual_cross_platform_shim_log(self):
-        import shutil
-        import stat
+    def test_tool_aware_cli_run_fails_without_writes_or_checkpoint(self):
+        import contextlib
+        import io
 
+        from skillopt_sleep.__main__ import main
         from skillopt_sleep.backend import CursorCliBackend
+        from skillopt_sleep.tasks_file import make_tasks_payload, write_tasks_file
 
-        stub_dir = tempfile.mkdtemp(prefix="skillopt_sleep_cursor_stub_")
-        try:
-            if os.name == "nt":
-                stub = os.path.join(stub_dir, "cursor-agent.cmd")
-                with open(stub, "w", encoding="utf-8") as f:
-                    f.write(
-                        "@echo off\n"
-                        'call .\\search.cmd "q" >nul 2>&1\n'
-                        'echo {"type":"result","is_error":false,"result":"Paris"}\n'
-                    )
-            else:
-                stub = os.path.join(stub_dir, "cursor-agent")
-                with open(stub, "w", encoding="utf-8") as f:
-                    f.write(
-                        "#!/usr/bin/env bash\n"
-                        './search "q" >/dev/null 2>&1\n'
-                        "echo '{\"type\":\"result\",\"is_error\":false,\"result\":\"Paris\"}'\n"
-                    )
-                os.chmod(
-                    stub,
-                    os.stat(stub).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH,
-                )
+        with tempfile.TemporaryDirectory() as tmp:
+            project = os.path.join(tmp, "project")
+            claude_home = os.path.join(tmp, ".claude")
+            target = os.path.join(
+                project,
+                ".cursor",
+                "skills",
+                "skillopt-sleep-learned",
+                "SKILL.md",
+            )
+            os.makedirs(project)
+            task = TaskRecord(
+                id="cursor-tool-task",
+                project=project,
+                intent="Search before answering",
+                reference_kind="rule",
+                judge={"checks": [{"op": "tool_called", "arg": "search"}]},
+                split="val",
+            )
+            payload = make_tasks_payload(
+                [task],
+                project=project,
+                transcript_source="cursor",
+                target_skill_path=target,
+            )
+            payload["reviewed"] = True
+            tasks_path = write_tasks_file(os.path.join(tmp, "tasks.json"), payload)
+            backend = CursorCliBackend(cursor_path="cursor-agent-test")
+            stderr = io.StringIO()
 
-            backend = CursorCliBackend(cursor_path=stub, timeout=60)
-            task = TaskRecord(id="cursor-tools", project="/p", intent="Capital of France?")
-            response, called = backend.attempt_with_tools(task, skill="", memory="", tools=["search"])
+            with mock.patch(
+                "skillopt_sleep.cycle.get_backend",
+                return_value=backend,
+            ):
+                with mock.patch("skillopt_sleep.backend.subprocess.run") as run:
+                    with contextlib.redirect_stderr(stderr):
+                        rc = main([
+                            "run",
+                            "--project", project,
+                            "--claude-home", claude_home,
+                            "--backend", "cursor",
+                            "--tasks-file", tasks_path,
+                            "--target-skill-path", target,
+                            "--auto-adopt",
+                        ])
 
-            self.assertEqual(response, "Paris")
-            self.assertEqual(called, ["search"])
-        finally:
-            shutil.rmtree(stub_dir, ignore_errors=True)
+            self.assertEqual(rc, 1)
+            self.assertIn("Cursor tool-aware replay is temporarily disabled", stderr.getvalue())
+            run.assert_not_called()
+            self.assertEqual(backend._cache, {})
+            self.assertFalse(os.path.exists(os.path.join(tmp, ".skillopt-sleep")))
+            self.assertFalse(os.path.exists(os.path.join(project, ".skillopt-sleep")))
+            self.assertFalse(os.path.exists(target))
 
     def test_cursor_failure_aborts_without_state_or_staging_and_cli_returns_nonzero(self):
         import contextlib

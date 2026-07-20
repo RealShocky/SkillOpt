@@ -141,14 +141,13 @@ read-only Ask mode in a new empty temporary workspace. Project file reads, file
 writes, and MCP tools are denied. `--project` does not change that execution
 workspace.
 
-Replays that validate tool use run in another isolated temporary workspace with
-an isolated Cursor config. Agent-mode sandboxing is disabled so the local
-headless configuration allowlists only generated shims. The shims record calls
-and return synthetic canned output; they do not invoke same-named project tools.
-These calls do not use `--force` or automatic MCP approval. Organization-enforced
-Cursor policies still apply. The current Cursor backend therefore does not
-provide end-to-end validation for skills that need repository inspection, real
-CLIs, browsers, running services, or file changes.
+Cursor tool-aware replay is temporarily disabled pending live Cursor
+permission-boundary validation. A task with a `tool_called` check fails nonzero
+before Agent mode starts and does not stage, adopt, cache, persist state, or
+advance the harvest checkpoint. Use another backend for such tasks. The current
+Cursor backend therefore does not provide end-to-end validation for skills that
+need repository inspection, real CLIs, browsers, running services, or file
+changes.
 
 There is no implemented fresh-worktree Cursor replay. If a report says
 `replay: mock`, that is the prompt-replay label and does not mean the mock model

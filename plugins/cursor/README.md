@@ -158,12 +158,11 @@ mode. File reads, file writes, and MCP tools are denied. `--project` selects the
 transcript scope, target files, state, and staging location; it does not make the
 project the Cursor Agent execution workspace.
 
-Tool-validated replays also use an isolated temporary workspace and Cursor
-config. They expose only generated local shims that record a call and return
-synthetic canned output; they do not invoke similarly named project commands.
-Agent-mode sandboxing is disabled so the local headless configuration can
-allowlist only those shims. The backend does not use `--force` or automatic MCP
-approval, and organization-enforced Cursor policies still apply.
+Cursor tool-aware replay is temporarily disabled pending live Cursor
+permission-boundary validation. Tasks containing a `tool_called` check fail
+nonzero before Agent mode starts. The failed replay does not add a cache entry,
+stage, adopt, persist state, or advance the harvest checkpoint. Use another
+backend for those tasks.
 
 This replay is useful for textual procedures, response conventions, and output
 formats. It is not an end-to-end evaluation of skills that depend on repository

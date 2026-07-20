@@ -75,10 +75,9 @@ optimization.
   a guarantee that outbound prompts are secret-free.
 - The Cursor backend sends prompts through the installed, authenticated
   `cursor-agent` CLI. Ordinary calls use read-only Ask mode in a new empty
-  temporary workspace with project file access denied. Tool-validated tasks use
-  another isolated workspace with only synthetic generated shims allowlisted;
-  those shims record calls and return canned output rather than invoking project
-  tools. Cursor and the model provider selected by Cursor can receive the
+  temporary workspace with project file access denied. Cursor tasks containing
+  `tool_called` validation fail before Agent mode starts; use another backend for
+  those tasks. Cursor and the model provider selected by Cursor can receive the
   resulting prompt content.
 - Outbound prompts are not currently guaranteed to be free of secrets. Do not
   use a third-party provider on sensitive transcripts without reviewing the data

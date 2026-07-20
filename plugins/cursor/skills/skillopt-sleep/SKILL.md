@@ -126,14 +126,13 @@ in a new empty temporary workspace in read-only Ask mode. File reads, file
 writes, and MCP tools are denied. `--project` controls harvesting, target files,
 state, and staging; it is not the Cursor Agent execution workspace.
 
-A tool-validated replay uses another isolated temporary workspace and Cursor
-config. Its generated local shims record calls and return synthetic output; they
-do not run project tools with the same names. Agent-mode sandboxing is disabled
-so the local headless configuration allowlists only those shims. It does not use
-`--force` or automatic MCP approval. Organization-enforced Cursor policies still
-apply. Do not claim that repository- or tool-dependent behavior was validated,
-and do not weaken these boundaries to make a replay pass. The current engine
-does not implement a fresh-worktree replay for Cursor.
+Cursor tool-aware replay is temporarily disabled pending live Cursor
+permission-boundary validation. A task containing a `tool_called` check fails
+nonzero before Agent mode starts. The failed replay does not add a cache entry,
+stage, adopt, persist state, or advance the harvest checkpoint. Use another
+backend for those tasks. Do not claim that repository- or tool-dependent
+behavior was validated. The current engine does not implement a fresh-worktree
+replay for Cursor.
 
 A real-backend `dry-run` still makes provider calls; it only suppresses staging.
 Session and task limits are workload bounds, not hard limits on calls, tokens,

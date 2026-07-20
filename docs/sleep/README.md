@@ -38,8 +38,8 @@ experience → long-term competence).
 > and tool names, but excludes tool arguments, tool outputs, and non-message records.
 > Known secret-shaped strings are redacted as defense in depth. The Cursor backend
 > sends prompts through `cursor-agent`; ordinary calls use read-only Ask mode in an
-> empty temporary workspace with project files denied. Tool-validated tasks use
-> synthetic local shims in another isolated workspace, not real project tools.
+> empty temporary workspace with project files denied. Cursor tool-aware replay is
+> temporarily disabled pending live permission-boundary validation.
 > Cursor and the model provider selected by Cursor may therefore receive
 > transcript-derived content.
 
@@ -104,8 +104,12 @@ The target skill is supplied to Cursor as prompt text; it is not invoked as a
 native skill. `--project` selects transcript scope, target files, state, and
 staging, but ordinary Cursor calls cannot inspect that project's files. The
 current backend therefore evaluates textual guidance rather than end-to-end
-repository, CLI, browser, or service workflows. Generated tool shims return
-synthetic output and do not run project commands.
+repository, CLI, browser, or service workflows.
+
+Cursor tool-aware replay is temporarily disabled pending live Cursor
+permission-boundary validation. If a task contains a `tool_called` check, the
+Cursor backend exits nonzero before starting Agent mode and does not stage,
+adopt, or advance state. Use another backend for those tasks.
 
 The initial harvest window is 72 hours. Set `--lookback-hours N` explicitly when
 older sessions should be considered; `0` scans all history subject to the

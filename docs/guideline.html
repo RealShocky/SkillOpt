@@ -466,9 +466,10 @@ skillopt-sleep adopt --project "$PWD"</code></pre>
     <p>The Cursor backend inserts that skill text into prompts; it does not
     invoke the file as a native skill. Ordinary calls run in read-only Ask mode
     in an empty temporary workspace and cannot inspect files under
-    <code>--project</code>. Tool-validation shims return synthetic output rather
-    than running project CLIs. This validates textual guidance, not end-to-end
-    repository, browser, service, or filesystem workflows.</p>
+    <code>--project</code>. Cursor tasks containing a <code>tool_called</code>
+    check fail before Agent mode starts; use another backend for those tasks.
+    This validates textual guidance, not end-to-end repository, browser,
+    service, or filesystem workflows.</p>
     <p>For subscription-based workflows that should not launch an API or model
     subprocess, use <code>--backend handoff</code> and follow the generated
     prompt/answer loop. Read the

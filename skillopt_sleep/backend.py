@@ -1232,19 +1232,11 @@ class CursorCliBackend(CliBackend):
     """Drive an authenticated Cursor Agent CLI in an isolated workspace.
 
     Cursor's JSON print format has one final ``result`` object. Ordinary calls
-    use Ask mode, which is read-only; the explicit tool-rollout path switches
-    to Agent mode with an isolated Cursor config and an explicit local-shim
-    allowlist so tool-use judges can observe genuine calls without exposing the
-    user's project or inheriting user-level Cursor permissions.
+    use Ask mode, which is read-only. Tool-aware replay is disabled until the
+    Cursor Agent permission boundary has been validated against the live CLI.
     """
 
     name = "cursor"
-    _TOOL_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
-    _WINDOWS_RESERVED = {
-        "aux", "con", "nul", "prn",
-        *(f"com{number}" for number in range(1, 10)),
-        *(f"lpt{number}" for number in range(1, 10)),
-    }
     _AUTH_ERROR_MARKERS = (
         "not authenticated",
         "authentication required",
@@ -1265,13 +1257,13 @@ class CursorCliBackend(CliBackend):
         "not available for your account",
         "invalid configuration",
     )
-    _REPLAY_DENY = ["Read(**)", "Write(**)", "Mcp(*:*)"]
+    _ASK_DENY = ["Read(**)", "Write(**)", "Mcp(*:*)"]
 
     def __init__(self, model: str = "", cursor_path: str = "", timeout: int = 240) -> None:
         super().__init__(model=model or os.environ.get("SKILLOPT_SLEEP_CURSOR_MODEL", ""), timeout=timeout)
         self.cursor_path = resolve_cursor_path(cursor_path)
 
-    def _command(self, workspace: str, *, read_only: bool) -> List[str]:
+    def _command(self, workspace: str) -> List[str]:
         cmd = [
             self.cursor_path,
             "-p",
@@ -1280,14 +1272,9 @@ class CursorCliBackend(CliBackend):
             "--trust",
             "--workspace",
             workspace,
+            "--mode",
+            "ask",
         ]
-        if read_only:
-            cmd += ["--mode", "ask"]
-        else:
-            # Sandbox mode can auto-run commands beyond the project allowlist.
-            # With sandboxing disabled, headless allowlist mode keeps this
-            # backend's permissions limited to the validated local shims.
-            cmd += ["--sandbox", "disabled"]
         if self.model:
             cmd += ["--model", self.model]
         return cmd
@@ -1325,42 +1312,6 @@ class CursorCliBackend(CliBackend):
         logging.getLogger("skillopt_sleep").warning("Cursor Agent call failed: %s", self.last_call_error)
         return CursorBackendError(self.last_call_error, retryable=retryable)
 
-    @classmethod
-    def _validated_tool_names(cls, tools: List[str]) -> List[str]:
-        names = tools or ["search"]
-        validated: List[str] = []
-        seen = set()
-        for name in names:
-            if not isinstance(name, str) or not cls._TOOL_NAME_RE.fullmatch(name):
-                raise ValueError(f"unsafe Cursor replay tool name: {name!r}")
-            if os.path.isabs(name) or "/" in name or "\\" in name or name in {".", ".."}:
-                raise ValueError(f"unsafe Cursor replay tool name: {name!r}")
-            if name.split(".", 1)[0].casefold() in cls._WINDOWS_RESERVED:
-                raise ValueError(f"reserved Cursor replay tool name: {name!r}")
-            folded = name.casefold()
-            if folded in seen:
-                raise ValueError(f"duplicate Cursor replay tool name: {name!r}")
-            seen.add(folded)
-            validated.append(name)
-        return validated
-
-    @staticmethod
-    def _write_tool_permissions(workspace: str, tools: List[str], *, is_windows: bool) -> None:
-        cursor_dir = os.path.join(workspace, ".cursor")
-        os.makedirs(cursor_dir, exist_ok=True)
-        commands = [f".\\{tool}.cmd" if is_windows else f"./{tool}" for tool in tools]
-        with open(os.path.join(cursor_dir, "cli.json"), "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "permissions": {
-                        "allow": [f"Shell({command})" for command in commands],
-                        "deny": CursorCliBackend._REPLAY_DENY,
-                    }
-                },
-                f,
-                indent=2,
-            )
-
     @staticmethod
     def _isolated_environment(runtime_dir: str) -> Dict[str, str]:
         config_dir = os.path.join(runtime_dir, "config")
@@ -1374,7 +1325,7 @@ class CursorCliBackend(CliBackend):
                     "editor": {"vimMode": False},
                     "permissions": {
                         "allow": [],
-                        "deny": CursorCliBackend._REPLAY_DENY,
+                        "deny": CursorCliBackend._ASK_DENY,
                     },
                     "approvalMode": "allowlist",
                     "sandbox": {
@@ -1397,15 +1348,7 @@ class CursorCliBackend(CliBackend):
         env["CURSOR_DATA_DIR"] = data_dir
         return env
 
-    @staticmethod
-    def _tool_invocations(tools: List[str], *, is_windows: bool) -> Tuple[str, str]:
-        if is_windows:
-            commands = ", ".join(f".\\{tool}.cmd" for tool in tools)
-            return commands, f".\\{tools[0]}.cmd \"query\""
-        commands = ", ".join(f"./{tool}" for tool in tools)
-        return commands, f"./{tools[0]} \"query\""
-
-    def _invoke_once(self, prompt: str, workspace: str, *, read_only: bool) -> str:
+    def _invoke_once(self, prompt: str, workspace: str) -> str:
         import shutil
 
         from skillopt_sleep.harvest_cursor import CURSOR_REPLAY_SENTINEL
@@ -1416,7 +1359,7 @@ class CursorCliBackend(CliBackend):
         try:
             runtime_dir = tempfile.mkdtemp(prefix="skillopt_sleep_cursor_runtime_")
             proc = subprocess.run(
-                self._command(workspace, read_only=read_only),
+                self._command(workspace),
                 capture_output=True,
                 creationflags=_NO_WINDOW,
                 text=True,
@@ -1430,7 +1373,7 @@ class CursorCliBackend(CliBackend):
         except subprocess.TimeoutExpired:
             raise self._error(
                 f"Cursor Agent timed out after {self.timeout}s",
-                retryable=read_only,
+                retryable=True,
             )
         except Exception as exc:
             raise self._error(f"Cursor Agent spawn failed: {exc}")
@@ -1462,7 +1405,7 @@ class CursorCliBackend(CliBackend):
             raise self._error(
                 "Cursor Agent returned no usable JSON response"
                 + (f": {detail[:300]}" if detail else ""),
-                retryable=read_only,
+                retryable=True,
             )
         self.last_call_error = ""
         return output
@@ -1473,7 +1416,7 @@ class CursorCliBackend(CliBackend):
         try:
             for attempt in range(2):
                 try:
-                    return self._invoke_once(prompt, workspace, read_only=True)
+                    return self._invoke_once(prompt, workspace)
                 except CursorBackendError as exc:
                     if not exc.retryable or attempt == 1:
                         raise
@@ -1493,61 +1436,11 @@ class CursorCliBackend(CliBackend):
         memory: str,
         tools: List[str],
     ) -> Tuple[str, List[str]]:
-        """Run a tool-aware rollout and report calls from local shim logs."""
-        import shutil
-        import stat
-
-        workspace = tempfile.mkdtemp(prefix="skillopt_sleep_cursortools_")
-        calllog = os.path.join(workspace, "_tool_calls.log")
-        is_windows = os.name == "nt"
-        try:
-            try:
-                tool_names = self._validated_tool_names(tools)
-            except ValueError as exc:
-                raise self._error(str(exc))
-            self._write_tool_permissions(workspace, tool_names, is_windows=is_windows)
-            for tool_name in tool_names:
-                if is_windows:
-                    shim = os.path.join(workspace, f"{tool_name}.cmd")
-                    with open(shim, "w", encoding="utf-8") as f:
-                        f.write(
-                            "@echo off\n"
-                            f'echo %~n0>>"{calllog}"\n'
-                            "echo (search results: 3 relevant notes found; use them to answer)\n"
-                        )
-                else:
-                    shim = os.path.join(workspace, tool_name)
-                    with open(shim, "w", encoding="utf-8") as f:
-                        f.write(
-                            "#!/usr/bin/env bash\n"
-                            f'echo "{tool_name}" >> "{calllog}"\n'
-                            'echo "(search results: 3 relevant notes found; use them to answer)"\n'
-                        )
-                    os.chmod(shim, os.stat(shim).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-
-            commands, invocation = self._tool_invocations(
-                tool_names,
-                is_windows=is_windows,
-            )
-            prompt = (
-                "You are completing a task. Apply the skill and memory rules exactly, "
-                "including any rule about searching or looking up information before answering.\n\n"
-                f"You have local shell tools: {commands}. When required, actually run one "
-                f"before answering (for example, `{invocation}`).\n\n"
-                f"# Skill\n{skill or '(none)'}\n\n# Memory\n{memory or '(none)'}\n\n"
-                f"# Task\n{task.intent}\n\n{task.context_excerpt}\n\n"
-                "Return only the final answer text."
-            )
-            response = self._invoke_once(prompt, workspace, read_only=False)
-            self._tokens += len(prompt) // 4 + len(response) // 4
-            called: List[str] = []
-            if os.path.exists(calllog):
-                with open(calllog, encoding="utf-8") as f:
-                    logged = {line.strip() for line in f if line.strip()}
-                called = [tool for tool in tool_names if tool in logged]
-            return response, called
-        finally:
-            shutil.rmtree(workspace, ignore_errors=True)
+        del task, skill, memory, tools
+        raise self._error(
+            "Cursor tool-aware replay is temporarily disabled pending live "
+            "Cursor permission-boundary validation"
+        )
 
 
 class DualBackend(Backend):

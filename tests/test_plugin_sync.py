@@ -101,8 +101,9 @@ class TestPluginParity(unittest.TestCase):
             text = _read(path)
             self.assertIn('"target_skill_path": ".cursor/skills/', text)
             self.assertIn("no session-end hook", text.lower())
-            self.assertIn("`--force`", text)
-            self.assertNotIn("explicit approval", text.lower())
+            self.assertIn("`tool_called`", text)
+            self.assertIn("temporarily disabled", text.lower())
+            self.assertIn("before agent mode", text.lower())
 
     def test_openclaw_wrapper_matches_shared_backend_signature(self):
         text = _read(OPENCLAW_RUNNER)
